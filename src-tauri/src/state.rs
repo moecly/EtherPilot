@@ -5,8 +5,17 @@ use ethercat::types::{EngineEvent, EngineState, MasterSnapshot};
 use ethercat::{EthercatError, Master, MasterConfig, SharedState};
 use parking_lot::Mutex;
 
-/// Priority requested for the cycle thread's `SCHED_FIFO` scheduling.
-const RT_PRIORITY: i32 = 80;
+/// `SCHED_FIFO` priority for the cycle thread. `0` (the default) disables real-time scheduling and
+/// memory locking entirely. This is deliberate: this engine shares its process with GTK/WebKit, and
+/// promoting the cycle thread above the compositor — or locking the whole GUI process's memory —
+/// has been observed to drive the app to ~12 GB RSS and a machine-wide OOM. Set `ECAT_RT_PRIORITY`
+/// (e.g. `80`) to opt back in; see also `crates/ethercat/src/rt.rs`.
+fn rt_priority() -> i32 {
+    std::env::var("ECAT_RT_PRIORITY")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0)
+}
 
 #[derive(Clone)]
 pub struct AppState {
@@ -51,7 +60,7 @@ impl AppState {
             MasterConfig {
                 iface: ifname.to_string(),
                 cycle_us,
-                rt_priority: RT_PRIORITY,
+                rt_priority: rt_priority(),
             },
             self.events.clone(),
         ) {

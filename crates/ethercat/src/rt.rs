@@ -18,8 +18,11 @@ pub fn promote_current_thread(prio: i32) -> Result<(), (i32, std::io::Error)> {
 
 #[cfg(target_os = "linux")]
 pub fn lock_memory() -> Result<(), std::io::Error> {
+    // MCL_CURRENT only, never MCL_FUTURE: this runs inside the whole Tauri/WebKit GUI process, so
+    // MCL_FUTURE would make every later allocation (GTK/WebKit/GL/GPU buffers) unswappable and
+    // unreclaimable — the app then exhausts RAM and the OOM killer takes down the desktop.
     // SAFETY: no arguments; affects only the calling process's address space.
-    let rc = unsafe { libc::mlockall(libc::MCL_CURRENT | libc::MCL_FUTURE) };
+    let rc = unsafe { libc::mlockall(libc::MCL_CURRENT) };
     if rc == 0 {
         Ok(())
     } else {

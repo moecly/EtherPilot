@@ -204,8 +204,10 @@ fn map_slaves(ctx: &soem_sys::ecx_contextt) -> Vec<SlaveInfo> {
     out
 }
 
-/// Build a human-readable report of every non-OPERATIONAL slave after a failed transition.
-unsafe fn describe_failed_slaves(ctx: *mut soem_sys::ecx_contextt) -> String {
+/// Build a report of every slave whose AL state is not `expected`, after a failed transition. The
+/// identity fields matter: without them a bare `state 0x0012 AL 0x001E` cannot be traced to a device
+/// or checked against its ESI.
+unsafe fn describe_slaves_not_in(ctx: *mut soem_sys::ecx_contextt, expected: u16) -> String {
     soem_sys::ecx_readstate(ctx);
     let c = &*ctx;
     let count = c.slavecount.max(0) as usize;
@@ -213,13 +215,15 @@ unsafe fn describe_failed_slaves(ctx: *mut soem_sys::ecx_contextt) -> String {
     let mut parts = Vec::new();
     for i in 1..=count.min(max) {
         let s = &c.slavelist[i];
-        if s.state & 0x0f != EC_STATE_OPERATIONAL {
+        if s.state & 0x0f != expected {
             let text = CStr::from_ptr(soem_sys::ec_ALstatuscode2string(s.ALstatuscode))
                 .to_string_lossy()
                 .into_owned();
+            let name = c_str_from_array(&s.name);
             parts.push(format!(
-                "slave {i} state 0x{:04X} AL 0x{:04X} {}",
-                s.state, s.ALstatuscode, text
+                "slave {i} '{name}' vendor 0x{:08X} product 0x{:08X} rev 0x{:08X} state 0x{:04X} \
+                 AL 0x{:04X} {text} ({}I/{}O bytes)",
+                s.eep_man, s.eep_id, s.eep_rev, s.state, s.ALstatuscode, s.Ibytes, s.Obytes
             ));
         }
     }
@@ -303,21 +307,25 @@ fn engine(
         }));
     };
 
-    match rt::promote_current_thread(cfg.rt_priority) {
-        Ok(()) => log(
-            LogLevel::Info,
-            format!("real-time: SCHED_FIFO priority {}", cfg.rt_priority),
-        ),
-        Err((prio, e)) => log(
-            LogLevel::Warn,
-            format!("real-time: SCHED_FIFO priority {prio} unavailable ({e}); using SCHED_OTHER"),
-        ),
-    }
-    if let Err(e) = rt::lock_memory() {
-        log(
-            LogLevel::Warn,
-            format!("real-time: mlockall failed ({e}); memory may be paged"),
-        );
+    if cfg.rt_priority > 0 {
+        match rt::promote_current_thread(cfg.rt_priority) {
+            Ok(()) => log(
+                LogLevel::Info,
+                format!("real-time: SCHED_FIFO priority {}", cfg.rt_priority),
+            ),
+            Err((prio, e)) => log(
+                LogLevel::Warn,
+                format!(
+                    "real-time: SCHED_FIFO priority {prio} unavailable ({e}); using SCHED_OTHER"
+                ),
+            ),
+        }
+        if let Err(e) = rt::lock_memory() {
+            log(
+                LogLevel::Warn,
+                format!("real-time: mlockall failed ({e}); memory may be paged"),
+            );
+        }
     }
 
     // The context and IOmap must stay alive and unmoved until after `ecx_close`.
@@ -351,7 +359,26 @@ fn engine(
     unsafe {
         soem_sys::ecx_config_map_group(ctx_ptr, iomap.as_mut_ptr().cast(), 0);
         soem_sys::ecx_configdc(ctx_ptr);
-        soem_sys::ecx_statecheck(ctx_ptr, 0, EC_STATE_SAFE_OP, TIMEOUT_STATE_US * 4);
+
+        // `ecx_config_map_group` drives each slave INIT -> PRE-OP -> SAFE-OP and stops at the first
+        // step a slave rejects. Verify it actually got everyone to SAFE-OP before asking for
+        // OPERATIONAL: a slave still sitting in PRE-OP reports a misleading "Invalid input
+        // configuration" (AL 0x001E) for what is really a failed SAFE-OP transition.
+        if soem_sys::ecx_statecheck(ctx_ptr, 0, EC_STATE_SAFE_OP, TIMEOUT_STATE_US * 4)
+            != EC_STATE_SAFE_OP
+        {
+            let details = describe_slaves_not_in(ctx_ptr, EC_STATE_SAFE_OP);
+            (*ctx_ptr).slavelist[0].state = EC_STATE_INIT;
+            soem_sys::ecx_writestate(ctx_ptr, 0);
+            soem_sys::ecx_close(ctx_ptr);
+            let _ = ready_tx.send(Err(EthercatError::Config(if details.is_empty() {
+                "slaves did not reach SAFE-OP".to_string()
+            } else {
+                details
+            })));
+            return;
+        }
+
         soem_sys::ecx_send_processdata(ctx_ptr);
         soem_sys::ecx_receive_processdata(ctx_ptr, TIMEOUT_RET_US);
         (*ctx_ptr).slavelist[0].state = EC_STATE_OPERATIONAL;
@@ -370,7 +397,7 @@ fn engine(
         }
 
         if !reached {
-            let details = describe_failed_slaves(ctx_ptr);
+            let details = describe_slaves_not_in(ctx_ptr, EC_STATE_OPERATIONAL);
             for line in details.split("; ").filter(|l| !l.is_empty()) {
                 log(LogLevel::Error, line.to_string());
             }

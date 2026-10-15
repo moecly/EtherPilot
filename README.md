@@ -24,8 +24,23 @@ promiscuous mode). The supported way to run is to grant the capability rather th
 sudo setcap cap_net_raw,cap_net_admin+eip target/debug/etherpilot
 ```
 
-The capability is lost on every rebuild and must be re-applied. `sudo pnpm tauri dev` also works but
-is not the documented path.
+The capability is lost on every rebuild and must be re-applied. `sudo pnpm tauri dev` is not
+supported: running the whole GUI stack as root also grants the engine real-time scheduling and
+memory locking on a process shared with GTK/WebKit, which has driven the app to ~12 GB RSS and a
+machine-wide OOM.
+
+## Real-time scheduling (opt-in, off by default)
+
+The cycle thread can run under `SCHED_FIFO` with locked memory, but this is **disabled by default**.
+Enabling it lets the engine out-rank the compositor and pin the whole GUI process's memory, so opt
+in only after validating it on your machine:
+
+```bash
+sudo setcap cap_net_raw,cap_net_admin,cap_sys_nice,cap_ipc_lock+eip target/debug/etherpilot
+ECAT_RT_PRIORITY=80 pnpm tauri dev
+```
+
+`ECAT_RT_PRIORITY=0` (the default) skips both `SCHED_FIFO` and `mlockall`.
 
 ## License
 

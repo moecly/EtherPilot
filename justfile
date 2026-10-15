@@ -10,11 +10,19 @@ frontend:
     pnpm install --frozen-lockfile
     pnpm build
 
-# SOEM opens an AF_PACKET socket; grant CAP_NET_RAW once per rebuild:
-#   sudo setcap cap_net_raw,cap_net_admin+eip target/debug/etherpilot
+# Grant the raw-socket capability to the freshly built binary. `setcap` is stored on the file, so
+# cargo overwrites it on every relink — re-apply after each build.
+cap:
+    sudo setcap cap_net_raw,cap_net_admin+eip target/debug/etherpilot
+
+# Build, grant the raw-socket capability, then launch the dev loop. The build must come *before*
+# `setcap` and `tauri dev` must reuse that fresh binary, otherwise the relink drops the capability
+# and `ecx_init` fails with `os error Some(1)` again.
+# Real-time scheduling + memory locking are opt-in and OFF by default; see README to enable them.
 # Needs port 1425 free (Vite dev server and the Tauri devUrl).
-# Launch the app: Vite dev server + Tauri webview on the current display.
 run:
+    cargo build -p etherpilot
+    just cap
     pnpm tauri dev
 
 # Build the vendored SOEM library and its samples (independent smoke test of the submodule).
