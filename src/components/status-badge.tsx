@@ -11,6 +11,10 @@ const STATUS: Record<EngineState, { label: string; className: string }> = {
     label: "running",
     className: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
   },
+  rebuilding: {
+    label: "rebuilding",
+    className: "bg-sky-500/15 text-sky-600 dark:text-sky-400",
+  },
   failed: { label: "failed", className: "bg-destructive/15 text-destructive" },
   stopped: { label: "stopped", className: "bg-muted text-muted-foreground" },
 };

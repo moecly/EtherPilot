@@ -14,7 +14,13 @@ export interface EngineLog {
   message: string;
 }
 
-export type EngineState = "idle" | "starting" | "running" | "failed" | "stopped";
+export type EngineState =
+  | "idle"
+  | "starting"
+  | "running"
+  | "rebuilding"
+  | "failed"
+  | "stopped";
 
 export type AlState =
   | "init"
@@ -42,6 +48,8 @@ export interface SlaveInfo {
   outputBits: number;
   inputBytes: number;
   outputBytes: number;
+  outputStartBit: number;
+  inputStartBit: number;
   hasDc: boolean;
   isLost: boolean;
   topology: number;
@@ -66,6 +74,23 @@ export interface CycleStats {
   avgCycleUs: number;
 }
 
+export interface BusHealth {
+  lost: number;
+  acks: number;
+  recovers: number;
+  reconfigs: number;
+  lastPassUs: number;
+  autoRecover: boolean;
+}
+
+export interface SlaveProcessData {
+  position: number;
+  outputsHex: string;
+  inputsHex: string;
+  outputStartBit: number;
+  inputStartBit: number;
+}
+
 export interface MasterSnapshot {
   state: EngineState;
   iface: string | null;
@@ -75,11 +100,116 @@ export interface MasterSnapshot {
   group0OutputBytes: number;
   segments: number;
   slaves: SlaveInfo[];
+  processData: SlaveProcessData[];
   cycle: CycleStats;
+  busHealth: BusHealth;
   updatedAtUs: number;
 }
 
 export interface IpcError {
   code: string;
   message: string;
+}
+
+// ---- SDO / OD ----
+
+export interface SdoValue {
+  slave: number;
+  index: number;
+  subindex: number;
+  size: number;
+  hex: string;
+  display: string;
+  dataType: number;
+  bitLength: number;
+  writable: boolean;
+}
+
+export type ValueFormat = "dec" | "hex" | "text" | "bool";
+
+export interface OdListEntry {
+  index: number;
+  dataType: number;
+  objectCode: number;
+  maxSub: number;
+  name: string;
+}
+
+export interface OdList {
+  slave: number;
+  entries: OdListEntry[];
+}
+
+export interface OdSubEntry {
+  subindex: number;
+  dataType: number;
+  bitLength: number;
+  objAccess: number;
+  name: string;
+  hasValue: boolean;
+}
+
+export interface OdEntry {
+  slave: number;
+  index: number;
+  dataType: number;
+  objectCode: number;
+  maxSub: number;
+  name: string;
+  subindices: OdSubEntry[];
+  truncated: boolean;
+  nextSubindex: number;
+}
+
+// ---- PDO ----
+
+export type PdoDirection = "rx" | "tx";
+
+export interface SmInfo {
+  sm: number;
+  smType: number;
+  startAddr: number;
+  lengthBytes: number;
+  enabled: boolean;
+}
+
+export interface PdoEntry {
+  index: number;
+  subindex: number;
+  bitLength: number;
+  filler: boolean;
+}
+
+export interface Pdo {
+  index: number;
+  entries: PdoEntry[];
+}
+
+export interface PdoAssignment {
+  assignIndex: number;
+  direction: PdoDirection;
+  pdos: Pdo[];
+}
+
+export interface PdoMap {
+  slave: number;
+  rxAssignIndex: number;
+  txAssignIndex: number;
+  assignments: PdoAssignment[];
+  syncManagers: SmInfo[];
+  outputBits: number;
+  inputBits: number;
+  truncated: boolean;
+  nextPdo: number;
+}
+
+export interface PdoMappingUpdate {
+  index: number;
+  entries: number[];
+}
+
+export interface PdoMapUpdate {
+  rx: number[];
+  tx: number[];
+  mappings: PdoMappingUpdate[];
 }

@@ -5,6 +5,7 @@ import { CycleTimeChart } from "@/components/cycle-time-chart";
 import { DiagnosticsStrip } from "@/components/diagnostics-strip";
 import { LogPanel } from "@/components/log-panel";
 import { MasterToolbar } from "@/components/master-toolbar";
+import { SlaveDetail } from "@/components/slave-detail";
 import { SlaveStateTable } from "@/components/slave-state-table";
 import { TopologyTree } from "@/components/topology-tree";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -89,6 +90,7 @@ export default function App() {
           </Panel>
         </div>
       </div>
+      <SlaveDetail />
     </div>
   );
 }

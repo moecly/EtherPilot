@@ -1,4 +1,5 @@
 import { AlStateBadge } from "@/components/al-state-badge";
+import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Table,
@@ -13,6 +14,10 @@ import { useMasterStore } from "@/store/master";
 
 export function SlaveStateTable() {
   const slaves = useMasterStore((s) => s.snapshot?.slaves);
+  const openSlave = useMasterStore((s) => s.openSlave);
+  const ackError = useMasterStore((s) => s.ackError);
+  const recoverSlave = useMasterStore((s) => s.recoverSlave);
+  const busy = useMasterStore((s) => s.busy);
 
   if (!slaves || slaves.length === 0) {
     return (
@@ -39,6 +44,7 @@ export function SlaveStateTable() {
             <TableHead>State</TableHead>
             <TableHead>AL</TableHead>
             <TableHead>I/O</TableHead>
+            <TableHead />
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -47,9 +53,10 @@ export function SlaveStateTable() {
               key={slave.position}
               className={
                 slave.alStateError || slave.isLost
-                  ? "bg-destructive/10 font-mono tabular-nums"
-                  : "font-mono tabular-nums"
+                  ? "bg-destructive/10 font-mono tabular-nums cursor-pointer"
+                  : "font-mono tabular-nums cursor-pointer"
               }
+              onClick={() => openSlave(slave.position)}
             >
               <TableCell className="text-right">{slave.position}</TableCell>
               <TableCell className="font-sans">{slave.name}</TableCell>
@@ -77,6 +84,32 @@ export function SlaveStateTable() {
               </TableCell>
               <TableCell>
                 {slave.outputBytes}O/{slave.inputBytes}I
+              </TableCell>
+              <TableCell className="text-right">
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  disabled={busy.ack}
+                  title="Ack error"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void ackError(slave.position);
+                  }}
+                >
+                  A
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  disabled={busy.recover}
+                  title="Recover"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void recoverSlave(slave.position);
+                  }}
+                >
+                  R
+                </Button>
               </TableCell>
             </TableRow>
           ))}

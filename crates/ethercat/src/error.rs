@@ -19,6 +19,22 @@ pub enum EthercatError {
     ThreadStart,
     #[error("engine thread panicked")]
     Join,
+    #[error("engine request timed out")]
+    RequestTimeout,
+    #[error(
+        "SDO abort 0x{abort_code:08X} on slave {slave} 0x{index:04X}:{subindex:02X}: {detail}"
+    )]
+    SdoAbort {
+        slave: u16,
+        index: u16,
+        subindex: u8,
+        abort_code: u32,
+        detail: String,
+    },
+    #[error("{0}")]
+    NotSupported(String),
+    #[error("{0}")]
+    InvalidArgument(String),
 }
 
 impl EthercatError {
@@ -34,6 +50,10 @@ impl EthercatError {
             EthercatError::NoSlaves { .. } => "no_slaves",
             EthercatError::Config(_) => "config",
             EthercatError::ThreadStart | EthercatError::Join => "internal",
+            EthercatError::RequestTimeout => "timeout",
+            EthercatError::SdoAbort { .. } => "sdo_abort",
+            EthercatError::NotSupported(_) => "not_supported",
+            EthercatError::InvalidArgument(_) => "invalid_argument",
         }
     }
 }

@@ -1,6 +1,7 @@
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Arc;
 
+use ethercat::request::{EngineRequest, EngineResponse, Reply};
 use ethercat::types::{EngineEvent, EngineState, MasterSnapshot};
 use ethercat::{EthercatError, Master, MasterConfig, SharedState};
 use parking_lot::Mutex;
@@ -99,6 +100,29 @@ impl AppState {
         match &inner.shared {
             Some(shared) => shared.snapshot(),
             None => inner.last.clone(),
+        }
+    }
+
+    /// Submit a request to the engine thread and block until it replies. The master's channel is
+    /// cloned while holding the lock, but the wait happens lock-free so `get_snapshot` stays live.
+    pub fn dispatch<F>(&self, make: F) -> Result<EngineResponse, EthercatError>
+    where
+        F: FnOnce(Reply) -> EngineRequest,
+    {
+        let tx = {
+            let inner = self.inner.lock();
+            inner
+                .master
+                .as_ref()
+                .ok_or(EthercatError::NotRunning)?
+                .sender()
+        };
+        let (reply_tx, reply_rx) = std::sync::mpsc::channel();
+        tx.send(make(reply_tx))
+            .map_err(|_| EthercatError::NotRunning)?;
+        match reply_rx.recv_timeout(ethercat::master::REQUEST_RECV_TIMEOUT) {
+            Ok(result) => result,
+            Err(_) => Err(EthercatError::RequestTimeout),
         }
     }
 }

@@ -39,6 +39,7 @@ pub enum EngineState {
     Idle,
     Starting,
     Running,
+    Rebuilding,
     Failed,
     Stopped,
 }
@@ -90,6 +91,8 @@ pub struct SlaveInfo {
     pub output_bits: u16,
     pub input_bytes: u32,
     pub output_bytes: u32,
+    pub output_start_bit: u8,
+    pub input_start_bit: u8,
     pub has_dc: bool,
     pub is_lost: bool,
     pub topology: u8,
@@ -127,7 +130,9 @@ pub struct MasterSnapshot {
     pub group0_output_bytes: u32,
     pub segments: u16,
     pub slaves: Vec<SlaveInfo>,
+    pub process_data: Vec<SlaveProcessData>,
     pub cycle: CycleStats,
+    pub bus_health: BusHealth,
     pub updated_at_us: u64,
 }
 
@@ -142,8 +147,178 @@ impl Default for MasterSnapshot {
             group0_output_bytes: 0,
             segments: 0,
             slaves: Vec::new(),
+            process_data: Vec::new(),
             cycle: CycleStats::default(),
+            bus_health: BusHealth::default(),
             updated_at_us: 0,
         }
     }
+}
+
+/// A single SDO object read back from a slave, with the raw value already decoded for display.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SdoValue {
+    pub slave: u16,
+    pub index: u16,
+    pub subindex: u8,
+    pub size: u32,
+    /// Lowercase hex, no separators, low byte first (i.e. wire order).
+    pub hex: String,
+    pub display: String,
+    pub data_type: u16,
+    pub bit_length: u16,
+    pub writable: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct OdList {
+    pub slave: u16,
+    pub entries: Vec<OdListEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct OdListEntry {
+    pub index: u16,
+    pub data_type: u16,
+    pub object_code: u8,
+    pub max_sub: u8,
+    pub name: String,
+}
+
+/// One index's description plus its subindex objects. `truncated` is set when the read hit the
+/// per-request budget; the caller resumes from `next_subindex`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct OdEntry {
+    pub slave: u16,
+    pub index: u16,
+    pub data_type: u16,
+    pub object_code: u8,
+    pub max_sub: u8,
+    pub name: String,
+    pub subindices: Vec<OdSubEntry>,
+    pub truncated: bool,
+    pub next_subindex: u8,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct OdSubEntry {
+    pub subindex: u8,
+    pub data_type: u16,
+    pub bit_length: u16,
+    pub obj_access: u16,
+    pub name: String,
+    pub has_value: bool,
+}
+
+/// How a string value from the UI should be turned into bytes. `dec`/`hex` honour the object's
+/// signedness and width; `text` is only valid for string types; `bool` accepts true/false/1/0.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ValueFormat {
+    Dec,
+    Hex,
+    Text,
+    Bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PdoDirection {
+    Rx,
+    Tx,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SmInfo {
+    pub sm: u8,
+    pub sm_type: u8,
+    pub start_addr: u16,
+    pub length_bytes: u16,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PdoEntry {
+    pub index: u16,
+    pub subindex: u8,
+    pub bit_length: u8,
+    pub filler: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct Pdo {
+    pub index: u16,
+    pub entries: Vec<PdoEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PdoAssignment {
+    pub assign_index: u16,
+    pub direction: PdoDirection,
+    pub pdos: Vec<Pdo>,
+}
+
+/// The PDO mapping of one slave: the SM layout plus every Rx/Tx assignment. `truncated` is set when
+/// the read hit the request budget; the caller resumes from `next_pdo`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PdoMap {
+    pub slave: u16,
+    pub rx_assign_index: u16,
+    pub tx_assign_index: u16,
+    pub assignments: Vec<PdoAssignment>,
+    pub sync_managers: Vec<SmInfo>,
+    pub output_bits: u32,
+    pub input_bits: u32,
+    pub truncated: bool,
+    pub next_pdo: u16,
+}
+
+/// A new mapping for a single PDO (0x1600.. / 0x1A00..). Each entry is the raw 32-bit mapping value
+/// (index << 16 | subindex << 8 | bit_length); `0` denotes a filler entry.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PdoMappingUpdate {
+    pub index: u16,
+    pub entries: Vec<u32>,
+}
+
+/// The full remap intent for one slave: the Rx/Tx assignment lists and the (re)written mappings.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PdoMapUpdate {
+    pub rx: Vec<u16>,
+    pub tx: Vec<u16>,
+    pub mappings: Vec<PdoMappingUpdate>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct BusHealth {
+    pub lost: u32,
+    pub acks: u64,
+    pub recovers: u64,
+    pub reconfigs: u64,
+    pub last_pass_us: u64,
+    pub auto_recover: bool,
+}
+
+/// A snapshot of one slave's process-data bytes, captured every `PROCESS_DATA_INTERVAL_CYCLES`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SlaveProcessData {
+    pub position: u16,
+    pub outputs_hex: String,
+    pub inputs_hex: String,
+    pub output_start_bit: u8,
+    pub input_start_bit: u8,
 }
