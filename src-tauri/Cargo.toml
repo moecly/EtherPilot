@@ -1,0 +1,20 @@
+[package]
+name = "etherpilot"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "EtherCAT master GUI built on SOEM"
+
+[lib]
+name = "etherpilot_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde.workspace = true
+serde_json.workspace = true
+parking_lot.workspace = true
+ethercat = { path = "../crates/ethercat" }
